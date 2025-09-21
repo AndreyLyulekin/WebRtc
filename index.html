@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WebRTC — GH Pages (ручной сигналинг)</title>
+  <style>
+    :root { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+    body { margin:0; padding:16px; display:grid; gap:16px; background:#0b0c10; color:#eaeef3; }
+    input, button, textarea { padding:10px 12px; border-radius:10px; border:1px solid #2b303b; background:#15171c; color:inherit; }
+    button { cursor:pointer; } button:disabled{ opacity:.5; cursor:not-allowed; }
+    .row { display:grid; grid-template-columns: 1fr 1fr auto auto; gap:8px; align-items:end; }
+    .videos { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    video { width:100%; aspect-ratio:16/9; background:#111; border-radius:12px; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    .card { border:1px solid #2b303b; border-radius:12px; background:#0f1116; padding:12px; display:grid; gap:8px; }
+    .chat { display:grid; gap:8px; grid-template-rows: 1fr auto; height:320px; }
+    .chat-messages{ overflow:auto; background:#0b0d12; border-radius:8px; padding:8px; }
+    .msg{ margin:0 0 6px; } .me{ color:#9ae6b4; } .peer{ color:#a0aec0; }
+    textarea{ width:100%; min-height:140px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .flex { display:flex; gap:8px; }
+    label { display:grid; gap:6px; }
+  </style>
+</head>
+<body>
+  <h1>WebRTC (без сервера): ручной обмен SDP</h1>
+
+  <div class="row">
+    <label>Room ID
+      <input id="room" placeholder="например, demo" />
+    </label>
+    <label>Name
+      <input id="name" placeholder="Ваше имя" />
+    </label>
+    <button id="joinBtn">Join</button>
+    <span id="status"></span>
+  </div>
+
+  <div class="row" style="grid-template-columns:auto auto auto auto auto">
+    <button id="mediaBtn" disabled>Get Media</button>
+    <button id="offerBtn" disabled>Create Offer</button>
+    <button id="hangupBtn" disabled>Hang Up</button>
+    <span id="peerHint"></span>
+  </div>
+
+  <div class="videos">
+    <div class="card"><b>Local</b><video id="localVideo" autoplay playsinline muted></video></div>
+    <div class="card"><b>Remote</b><video id="remoteVideo" autoplay playsinline></video></div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <b>1) Отправитель → создаёт Offer и передаёт получателю</b>
+      <div class="flex">
+        <button id="copyOfferBtn" disabled>Copy Offer</button>
+      </div>
+      <textarea id="offerOut" readonly placeholder="Здесь появится JSON с оффером"></textarea>
+
+      <b>2) Отправитель ← вставляет Answer от получателя и применяет</b>
+      <textarea id="answerIn" placeholder="Вставьте JSON с ответом (answer)"></textarea>
+      <div class="flex">
+        <button id="applyAnswerBtn" disabled>Apply Answer</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <b>1) Получатель ← вставляет Offer и создаёт Answer</b>
+      <textarea id="offerIn" placeholder="Вставьте JSON с оффером"></textarea>
+      <div class="flex">
+        <button id="acceptOfferBtn" disabled>Accept Offer & Create Answer</button>
+        <button id="copyAnswerBtn" disabled>Copy Answer</button>
+      </div>
+      <textarea id="answerOut" readonly placeholder="Здесь появится JSON с answer"></textarea>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card chat">
+      <div id="chatMessages" class="chat-messages"></div>
+      <div style="display:grid; grid-template-columns:1fr auto; gap:6px">
+        <input id="chatInput" placeholder="Message..." disabled />
+        <button id="chatSend" disabled>Send</button>
+      </div>
+    </div>
+    <div class="card">
+      <b>Памятка</b>
+      <ul>
+        <li>Шаг A (Отправитель): Get Media (по желанию) → Create Offer → Copy Offer → отправить другу.</li>
+        <li>Шаг B (Получатель): вставить Offer → Accept & Create Answer → Copy Answer → отправить обратно.</li>
+        <li>Шаг C (Отправитель): вставить Answer → Apply Answer.</li>
+        <li>Чат включится, когда откроется DataChannel.</li>
+      </ul>
+      <small>Без TURN иногда не соединится за жёсткими NAT — для друзей обычно ОК.</small>
+    </div>
+  </div>
+
+  <script type="module" src="./client.js"></script>
+</body>
+</html>
