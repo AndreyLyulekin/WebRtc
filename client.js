@@ -7,9 +7,6 @@ let remoteName = 'Peer';
 
 const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 
-// локальный буфер кандидатов для «Copy Candidates»
-let localCands = [];
-
 const enable = (id, on) => { const el = $(id); if (el) el.disabled = !on; };
 const setChatEnabled = (on) => { enable('chatInput', on); enable('chatSend', on); };
 
@@ -18,6 +15,7 @@ window.addEventListener('DOMContentLoaded', () => {
   wireHandlers();
 });
 
+/* ---------- UI wiring ---------- */
 function wireHandlers() {
   $('joinBtn').onclick = onJoin;
   $('mediaBtn').onclick = onGetMedia;
@@ -35,12 +33,6 @@ function wireHandlers() {
   $('acceptOfferBtn').onclick = onAcceptOffer;
   $('copyAnswerBtn').onclick = () => navigator.clipboard.writeText($('answerOut').value);
 
-  // Candidates
-  $('copyCandsOffererBtn').onclick = () => copyCands('candsOutOfferer');
-  $('copyCandsAnswererBtn').onclick = () => copyCands('candsOutAnswerer');
-  $('applyCandsFromOffererBtn').onclick = () => applyCandsFrom('candsInFromOfferer');
-  $('applyCandsFromAnswererBtn').onclick = () => applyCandsFrom('candsInFromAnswerer');
-
   // Chat
   $('chatSend').onclick = sendChat;
   $('chatInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendChat(); });
@@ -49,6 +41,7 @@ function wireHandlers() {
   $('hangupBtn').onclick = hangup;
 }
 
+/* ---------- Join / Media ---------- */
 function onJoin() {
   localName = $('name').value.trim();
   if (!localName) return alert('Введите Name');
@@ -58,12 +51,8 @@ function onJoin() {
   // Сразу разрешаем и Get Media, и Create Offer
   enable('mediaBtn', true);
   enable('offerBtn', true);
-
-  // Разрешаем ответ/применение и обмен кандидатами
   enable('acceptOfferBtn', true);
   enable('applyAnswerBtn', true);
-  enable('applyCandsFromOffererBtn', true);
-  enable('applyCandsFromAnswererBtn', true);
   enable('unmuteBtn', true);
 }
 
@@ -71,8 +60,8 @@ async function onGetMedia() {
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
     $('localVideo').srcObject = localStream;
-    // Если PC уже существует — добавим треки
-    if (pc) {
+    // Если PC уже существует — добавим треки (до оффера/ансвера — отлично)
+    if (pc && pc.signalingState === 'stable') {
       for (const t of localStream.getTracks()) pc.addTrack(t, localStream);
     }
   } catch (e) {
@@ -80,17 +69,25 @@ async function onGetMedia() {
   }
 }
 
+/* ---------- Offerer flow (no-trickle) ---------- */
 async function onCreateOffer() {
   if (!joined) return;
 
-  ensurePC(true);           // инициатор создаёт DataChannel
-  addLocalOrReceivers();    // если нет медиа — добавит recvonly транссиверы
+  ensurePC(true);            // инициатор создаёт DataChannel
+  addLocalOrReceivers();     // если нет медиа — добавим recvonly транссиверы
 
-  // компактный оффер (не ждём ICE)
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
 
-  $('offerOut').value = JSON.stringify({ type: 'offer', sdp: offer.sdp, name: localName, ts: Date.now() });
+  // ждём полного сбора ICE, чтобы включить кандидатов в SDP
+  await waitIceComplete(pc);
+
+  $('offerOut').value = JSON.stringify({
+    type: 'offer',
+    sdp: pc.localDescription.sdp,
+    name: localName,
+    ts: Date.now(),
+  });
   enable('copyOfferBtn', true);
   enable('applyAnswerBtn', true);
 }
@@ -100,9 +97,11 @@ async function onApplyAnswer() {
   try { data = JSON.parse($('answerIn').value); } catch { return alert('Неверный JSON ответа'); }
   if (data.type !== 'answer' || !data.sdp) return alert('Это не answer');
   if (data.name) remoteName = data.name;
+
   await pc.setRemoteDescription({ type: 'answer', sdp: data.sdp });
 }
 
+/* ---------- Answerer flow (no-trickle) ---------- */
 async function onAcceptOffer() {
   if (!joined) return;
 
@@ -111,7 +110,7 @@ async function onAcceptOffer() {
   if (data.type !== 'offer' || !data.sdp) return alert('Это не оффер');
   if (data.name) remoteName = data.name;
 
-  ensurePC(false);          // получатель: НЕ создаёт DataChannel вручную
+  ensurePC(false);           // получатель: НЕ создаёт DataChannel вручную
 
   // 1) Сначала применяем оффер
   await pc.setRemoteDescription({ type: 'offer', sdp: data.sdp });
@@ -119,52 +118,47 @@ async function onAcceptOffer() {
   // 2) Затем добавляем свои треки (если есть) или recvonly
   addLocalOrReceivers();
 
-  // 3) Создаём и публикуем answer
+  // 3) Создаём answer и ждём ICE complete, чтобы включить кандидатов
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
+  await waitIceComplete(pc);
 
-  $('answerOut').value = JSON.stringify({ type: 'answer', sdp: answer.sdp, name: localName, ts: Date.now() });
+  $('answerOut').value = JSON.stringify({
+    type: 'answer',
+    sdp: pc.localDescription.sdp,
+    name: localName,
+    ts: Date.now(),
+  });
   enable('copyAnswerBtn', true);
 }
 
-/* ==== Candidates (trickle) ==== */
-function copyCands(outId) {
-  const payload = { type: 'candidates', list: localCands, end: true };
-  $(outId).value = JSON.stringify(payload);
-  navigator.clipboard.writeText($(outId).value);
+/* ---------- Helpers ---------- */
+
+// ждём окончания сбора ICE для включения кандидатов в SDP
+function waitIceComplete(pc) {
+  return new Promise((resolve) => {
+    if (pc.iceGatheringState === 'complete') return resolve();
+    const check = () => {
+      $('iceState').textContent = `ICE: ${pc.iceGatheringState}`;
+      if (pc.iceGatheringState === 'complete') {
+        pc.removeEventListener('icegatheringstatechange', check);
+        resolve();
+      }
+    };
+    pc.addEventListener('icegatheringstatechange', check);
+    // failsafe таймаут: если что-то залипло — отдаём то, что есть
+    setTimeout(() => {
+      pc.removeEventListener('icegatheringstatechange', check);
+      resolve();
+    }, 5000);
+  });
 }
 
-async function applyCandsFrom(inId) {
-  let data;
-  try { data = JSON.parse($(inId).value); } catch { return alert('Неверный JSON кандидатов'); }
-  if (!data || data.type !== 'candidates') return alert('Это не пакет кандидатов');
-  for (const c of data.list || []) {
-    try { await pc.addIceCandidate(c); } catch { /* игнорируем */ }
-  }
-  try { await pc.addIceCandidate(null); } catch {}
-  alert('Кандидаты применены');
-}
-
-/* ==== Core ==== */
 function ensurePC(createDC = false) {
   if (pc) return pc;
 
-  // Сбросим старые кандидаты на новый вызов
-  localCands = [];
   remoteStream = new MediaStream();
-
   pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-
-  pc.onicecandidate = (ev) => {
-    if (ev.candidate) {
-      localCands.push(ev.candidate);
-    } else {
-      // Конец сбора — теперь можно копировать кандидаты
-      $('iceState').textContent = `ICE gathered`;
-      enable('copyCandsOffererBtn', true);
-      enable('copyCandsAnswererBtn', true);
-    }
-  };
 
   pc.onicegatheringstatechange = () => {
     $('iceState').textContent = `ICE: ${pc.iceGatheringState}`;
@@ -176,6 +170,7 @@ function ensurePC(createDC = false) {
     enable('hangupBtn', !(s === 'closed' || s === 'failed' || s === 'disconnected'));
   };
 
+  // Критично: собираем единый поток из входящих треков
   pc.ontrack = (ev) => {
     remoteStream.addTrack(ev.track);
     const v = $('remoteVideo');
@@ -183,8 +178,8 @@ function ensurePC(createDC = false) {
     v.play?.().catch(() => {}); // на мобиле может требоваться жест
   };
 
+  // DataChannel
   pc.ondatachannel = (ev) => { dc = ev.channel; wireDC(); };
-
   if (createDC) { dc = pc.createDataChannel('chat', { ordered: true }); wireDC(); }
 
   return pc;
@@ -194,6 +189,7 @@ function wireDC() {
   if (!dc) return;
   dc.onopen = () => {
     setChatEnabled(true);
+    // мини-handshake: сообщим своё имя
     try { dc.send(JSON.stringify({ type: 'hello', name: localName })); } catch {}
   };
   dc.onclose = () => setChatEnabled(false);
@@ -264,10 +260,6 @@ function initUI() {
   enable('acceptOfferBtn', false);
   enable('copyAnswerBtn', false);
   enable('applyAnswerBtn', false);
-  enable('copyCandsOffererBtn', false);
-  enable('copyCandsAnswererBtn', false);
-  enable('applyCandsFromOffererBtn', false);
-  enable('applyCandsFromAnswererBtn', false);
   enable('unmuteBtn', false);
   setChatEnabled(false);
 }

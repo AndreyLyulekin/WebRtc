@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WebRTC — GH Pages (ручной сигналинг, trickle ICE)</title>
+  <title>WebRTC — GH Pages (ручной сигналинг, no-trickle ICE)</title>
   <style>
     :root { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
     body { margin:0; padding:16px; display:grid; gap:16px; background:#0b0c10; color:#eaeef3; }
@@ -17,14 +17,14 @@
     .chat { display:grid; gap:8px; grid-template-rows: 1fr auto; height:320px; }
     .chat-messages{ overflow:auto; background:#0b0d12; border-radius:8px; padding:8px; }
     .msg{ margin:0 0 6px; } .me{ color:#9ae6b4; } .peer{ color:#a0aec0; }
-    textarea{ width:100%; min-height:120px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    textarea{ width:100%; min-height:140px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .flex { display:flex; gap:8px; flex-wrap:wrap; }
     label { display:grid; gap:6px; }
     small { color:#9aa4b2 }
   </style>
 </head>
 <body>
-  <h1>WebRTC: без сервера, компактные JSON (trickle ICE)</h1>
+  <h1>WebRTC: ручной сигналинг, оффер/ансвер уже с кандидатами</h1>
 
   <div class="row">
     <label>Name
@@ -41,7 +41,10 @@
     <button id="unmuteBtn" disabled>Enable remote audio</button>
     <span id="iceState"></span>
   </div>
-  <small>Инициатор может делать Offer и без своей камеры. Чтобы вас видели/слышали — нажмите <b>Get Media</b> до Offer (или позже — и добавится в звонок).</small>
+  <small>
+    Для двустороннего видео/аудио нажмите <b>Get Media</b> на обеих сторонах <i>до</i> обмена оффер/ансвер.
+    (Без медиа оффер создаётся, но ваши треки не попадут в звонок без повторной переговорки.)
+  </small>
 
   <div class="videos">
     <div class="card">
@@ -59,28 +62,17 @@
       <b>Отправитель (инициатор)</b>
       <ol>
         <li>(опц.) <b>Get Media</b></li>
-        <li><b>Create Offer</b> → <b>Copy Offer</b> и отправь другу</li>
+        <li><b>Create Offer</b> → дождись <i>ICE: complete</i> → <b>Copy Offer</b> и отправь другу</li>
         <li>Вставь его Answer → <b>Apply Answer</b></li>
-        <li>Когда появятся кандидаты, <b>Copy Candidates</b> и передай другу</li>
       </ol>
       <div class="flex">
         <button id="copyOfferBtn" disabled>Copy Offer</button>
       </div>
-      <textarea id="offerOut" readonly placeholder="Оффер (небольшой JSON)"></textarea>
+      <textarea id="offerOut" readonly placeholder="Оффер (JSON со всеми кандидатами)"></textarea>
 
       <textarea id="answerIn" placeholder="Вставь JSON с answer от друга"></textarea>
       <div class="flex">
         <button id="applyAnswerBtn" disabled>Apply Answer</button>
-      </div>
-
-      <textarea id="candsOutOfferer" readonly placeholder="Локальные ICE-кандидаты (инициатор)"></textarea>
-      <div class="flex">
-        <button id="copyCandsOffererBtn" disabled>Copy Candidates</button>
-      </div>
-
-      <textarea id="candsInFromAnswerer" placeholder="Вставь кандидаты от получателя"></textarea>
-      <div class="flex">
-        <button id="applyCandsFromAnswererBtn" disabled>Apply Candidates</button>
       </div>
     </div>
 
@@ -88,9 +80,7 @@
       <b>Получатель</b>
       <ol>
         <li>Вставь Offer от друга → <b>Accept & Create Answer</b></li>
-        <li><b>Copy Answer</b> и передай ему</li>
-        <li>Когда появятся кандидаты, <b>Copy Candidates</b> и отправь ему</li>
-        <li>Вставь его кандидаты → <b>Apply Candidates</b></li>
+        <li>Дождись <i>ICE: complete</i> → <b>Copy Answer</b> и отправь ему</li>
       </ol>
 
       <textarea id="offerIn" placeholder="Вставь JSON с оффером"></textarea>
@@ -98,17 +88,7 @@
         <button id="acceptOfferBtn" disabled>Accept & Create Answer</button>
         <button id="copyAnswerBtn" disabled>Copy Answer</button>
       </div>
-      <textarea id="answerOut" readonly placeholder="Answer (небольшой JSON)"></textarea>
-
-      <textarea id="candsOutAnswerer" readonly placeholder="Локальные ICE-кандидаты (получатель)"></textarea>
-      <div class="flex">
-        <button id="copyCandsAnswererBtn" disabled>Copy Candidates</button>
-      </div>
-
-      <textarea id="candsInFromOfferer" placeholder="Вставь кандидаты от инициатора"></textarea>
-      <div class="flex">
-        <button id="applyCandsFromOffererBtn" disabled>Apply Candidates</button>
-      </div>
+      <textarea id="answerOut" readonly placeholder="Answer (JSON со всеми кандидатами)"></textarea>
     </div>
   </div>
 
@@ -123,8 +103,8 @@
     <div class="card">
       <b>Подсказки</b>
       <ul>
-        <li>Trickle ICE: оффер/ансвер короткие; кандидаты → отдельным маленьким JSON.</li>
-        <li>Если нет звука на мобиле — нажмите <b>Enable remote audio</b>.</li>
+        <li>Мы ждём завершения ICE → оффер/ансвер уже включают всех кандидатов.</li>
+        <li>Если на мобиле нет звука — нажмите <b>Enable remote audio</b>.</li>
       </ul>
     </div>
   </div>
