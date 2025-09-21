@@ -48,7 +48,7 @@ function onJoin() {
   joined = true;
   $('status').textContent = `Joined as ${localName}`;
 
-  // Сразу разрешаем и Get Media, и Create Offer
+  // Сразу разрешаем и Get Media, и Create Offer / Accept
   enable('mediaBtn', true);
   enable('offerBtn', true);
   enable('acceptOfferBtn', true);
@@ -60,7 +60,7 @@ async function onGetMedia() {
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
     $('localVideo').srcObject = localStream;
-    // Если PC уже существует — добавим треки (до оффера/ансвера — отлично)
+    // Если PC уже существует — добавим треки (до оффера/ансвера — идеально)
     if (pc && pc.signalingState === 'stable') {
       for (const t of localStream.getTracks()) pc.addTrack(t, localStream);
     }
@@ -79,7 +79,7 @@ async function onCreateOffer() {
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
 
-  // ждём полного сбора ICE, чтобы включить кандидатов в SDP
+  // ЖДЁМ ТОЛЬКО до реального ICE: complete (без таймаута)
   await waitIceComplete(pc);
 
   $('offerOut').value = JSON.stringify({
@@ -88,17 +88,9 @@ async function onCreateOffer() {
     name: localName,
     ts: Date.now(),
   });
-  enable('copyOfferBtn', true);
+
+  enable('copyOfferBtn', true);        // копировать можно только после complete
   enable('applyAnswerBtn', true);
-}
-
-async function onApplyAnswer() {
-  let data;
-  try { data = JSON.parse($('answerIn').value); } catch { return alert('Неверный JSON ответа'); }
-  if (data.type !== 'answer' || !data.sdp) return alert('Это не answer');
-  if (data.name) remoteName = data.name;
-
-  await pc.setRemoteDescription({ type: 'answer', sdp: data.sdp });
 }
 
 /* ---------- Answerer flow (no-trickle) ---------- */
@@ -121,6 +113,7 @@ async function onAcceptOffer() {
   // 3) Создаём answer и ждём ICE complete, чтобы включить кандидатов
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
+
   await waitIceComplete(pc);
 
   $('answerOut').value = JSON.stringify({
@@ -129,7 +122,18 @@ async function onAcceptOffer() {
     name: localName,
     ts: Date.now(),
   });
-  enable('copyAnswerBtn', true);
+
+  enable('copyAnswerBtn', true);       // копировать можно только после complete
+}
+
+/* ---------- Apply Answer (Offerer) ---------- */
+async function onApplyAnswer() {
+  let data;
+  try { data = JSON.parse($('answerIn').value); } catch { return alert('Неверный JSON ответа'); }
+  if (data.type !== 'answer' || !data.sdp) return alert('Это не answer');
+  if (data.name) remoteName = data.name;
+
+  await pc.setRemoteDescription({ type: 'answer', sdp: data.sdp });
 }
 
 /* ---------- Helpers ---------- */
@@ -137,20 +141,17 @@ async function onAcceptOffer() {
 // ждём окончания сбора ICE для включения кандидатов в SDP
 function waitIceComplete(pc) {
   return new Promise((resolve) => {
+    const update = () => { $('iceState').textContent = `ICE: ${pc.iceGatheringState}`; };
+    update();
     if (pc.iceGatheringState === 'complete') return resolve();
-    const check = () => {
-      $('iceState').textContent = `ICE: ${pc.iceGatheringState}`;
+    const onchg = () => {
+      update();
       if (pc.iceGatheringState === 'complete') {
-        pc.removeEventListener('icegatheringstatechange', check);
+        pc.removeEventListener('icegatheringstatechange', onchg);
         resolve();
       }
     };
-    pc.addEventListener('icegatheringstatechange', check);
-    // failsafe таймаут: если что-то залипло — отдаём то, что есть
-    setTimeout(() => {
-      pc.removeEventListener('icegatheringstatechange', check);
-      resolve();
-    }, 5000);
+    pc.addEventListener('icegatheringstatechange', onchg);
   });
 }
 
@@ -170,7 +171,7 @@ function ensurePC(createDC = false) {
     enable('hangupBtn', !(s === 'closed' || s === 'failed' || s === 'disconnected'));
   };
 
-  // Критично: собираем единый поток из входящих треков
+  // Собираем единый удалённый поток из входящих треков
   pc.ontrack = (ev) => {
     remoteStream.addTrack(ev.track);
     const v = $('remoteVideo');
@@ -178,7 +179,6 @@ function ensurePC(createDC = false) {
     v.play?.().catch(() => {}); // на мобиле может требоваться жест
   };
 
-  // DataChannel
   pc.ondatachannel = (ev) => { dc = ev.channel; wireDC(); };
   if (createDC) { dc = pc.createDataChannel('chat', { ordered: true }); wireDC(); }
 
